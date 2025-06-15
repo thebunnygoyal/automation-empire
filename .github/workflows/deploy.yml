@@ -1,0 +1,113 @@
+name: Deploy Automation Empire
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AZURE_RESOURCE_GROUP: automation-empire-rg
+  AZURE_LOCATION: eastus2
+  NODE_VERSION: '18.x'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        
+    - name: Install pnpm
+      uses: pnpm/action-setup@v2
+      with:
+        version: 8
+        
+    - name: Install dependencies
+      run: pnpm install
+      
+    - name: Build website
+      run: pnpm run build
+      working-directory: ./website
+      
+    - name: Run tests
+      run: pnpm test
+      continue-on-error: true
+      
+  deploy-infrastructure:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+        
+    - name: Deploy Infrastructure
+      run: |
+        chmod +x ./scripts/deploy-all.sh
+        ./scripts/deploy-all.sh
+      env:
+        N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+        
+  deploy-website:
+    needs: deploy-infrastructure
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        
+    - name: Build Docker image
+      run: |
+        cd website
+        docker build -t automation-empire-website:latest .
+        
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+        
+    - name: Deploy to Container Apps
+      run: |
+        # Get ACR details
+        ACR_NAME=$(az acr list --resource-group $AZURE_RESOURCE_GROUP --query "[0].name" -o tsv)
+        ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
+        
+        # Push image
+        az acr build --registry $ACR_NAME --image empire-website:latest ./website
+        
+        # Update Container App
+        az containerapp update \
+          --name automation-empire-website \
+          --resource-group $AZURE_RESOURCE_GROUP \
+          --image $ACR_LOGIN_SERVER/empire-website:latest
+          
+  deploy-workflows:
+    needs: deploy-infrastructure
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Deploy n8n Workflows
+      run: |
+        chmod +x ./workflows/deploy-workflows.sh
+        cd workflows
+        ./deploy-workflows.sh
+      env:
+        N8N_API_KEY: ${{ secrets.N8N_API_KEY }}

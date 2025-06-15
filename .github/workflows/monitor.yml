@@ -1,0 +1,43 @@
+name: Monitor Empire Health
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # Every 15 minutes
+  workflow_dispatch:
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check Website Health
+      run: |
+        WEBSITE_URL="https://automation-empire-website.livelypebble-c844ad2d.eastus2.azurecontainerapps.io"
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" $WEBSITE_URL || echo "000")
+        
+        if [ "$HTTP_CODE" != "200" ]; then
+          echo "::error::Website is unhealthy! HTTP Status: $HTTP_CODE"
+          exit 1
+        fi
+        
+        echo "✅ Website is healthy!"
+        
+    - name: Check n8n Health
+      run: |
+        N8N_URL="https://n8n-app.livelypebble-c844ad2d.eastus2.azurecontainerapps.io"
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" $N8N_URL/healthz || echo "000")
+        
+        if [ "$HTTP_CODE" != "200" ]; then
+          echo "::error::n8n is unhealthy! HTTP Status: $HTTP_CODE"
+          exit 1
+        fi
+        
+        echo "✅ n8n is healthy!"
+        
+    - name: Send Alert on Failure
+      if: failure()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        text: '🚨 Automation Empire Health Check Failed!'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}

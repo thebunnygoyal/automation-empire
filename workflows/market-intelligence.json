@@ -1,0 +1,177 @@
+{
+  "name": "Market Intelligence Gatherer",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 3,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.coingecko.com/api/v3/coins/markets",
+        "options": {
+          "qs": {
+            "vs_currency": "usd",
+            "order": "market_cap_desc",
+            "per_page": "100",
+            "page": "1",
+            "sparkline": "false"
+          }
+        }
+      },
+      "id": "http-request",
+      "name": "Fetch Market Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Analyze market trends\nconst item = $input.item.json;\nconst priceChange = item.price_change_percentage_24h;\n\n// Identify opportunities\nif (priceChange > 10) {\n  item.signal = 'STRONG_BUY';\n  item.alert = true;\n} else if (priceChange > 5) {\n  item.signal = 'BUY';\n} else if (priceChange < -10) {\n  item.signal = 'STRONG_SELL';\n  item.alert = true;\n} else if (priceChange < -5) {\n  item.signal = 'SELL';\n} else {\n  item.signal = 'HOLD';\n}\n\nreturn item;"
+      },
+      "id": "code-analysis",
+      "name": "Analyze Trends",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.alert }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-alert",
+      "name": "Check Alert",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "url": "={{ $env.DISCORD_WEBHOOK_URL }}",
+        "options": {
+          "bodyContentType": "json"
+        },
+        "body": "={{ { \"content\": `🚨 **Market Alert** 🚨\\n\\n**${$json.name}** (${$json.symbol.toUpperCase()})\\nPrice: $${$json.current_price}\\nChange: ${$json.price_change_percentage_24h.toFixed(2)}%\\nSignal: **${$json.signal}**\\n\\nMarket Cap: $${$json.market_cap.toLocaleString()}\\nVolume: $${$json.total_volume.toLocaleString()}` } }}"
+      },
+      "id": "discord-alert",
+      "name": "Send Discord Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": {
+          "__rl": true,
+          "value": "market_intelligence",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ new Date().toISOString() }}",
+            "symbol": "={{ $json.symbol }}",
+            "name": "={{ $json.name }}",
+            "price": "={{ $json.current_price }}",
+            "change_24h": "={{ $json.price_change_percentage_24h }}",
+            "market_cap": "={{ $json.market_cap }}",
+            "volume": "={{ $json.total_volume }}",
+            "signal": "={{ $json.signal }}"
+          }
+        }
+      },
+      "id": "store-data",
+      "name": "Store in Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1050, 400]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Market Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Market Data": {
+      "main": [
+        [
+          {
+            "node": "Analyze Trends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Trends": {
+      "main": [
+        [
+          {
+            "node": "Check Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Discord Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Store in Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "market-intelligence"
+    },
+    {
+      "name": "automated"
+    }
+  ]
+}
